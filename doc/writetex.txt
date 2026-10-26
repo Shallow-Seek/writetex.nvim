@@ -1,0 +1,146 @@
+*writetex.txt*  Handwritten math from the WriteTex tablet app, as LaTeX at the cursor
+
+==============================================================================
+CONTENTS                                                    *writetex-contents*
+
+  1. Introduction ............................. |writetex-intro|
+  2. Setup .................................... |writetex-setup|
+  3. Commands ................................. |writetex-commands|
+  4. Options .................................. |writetex-options|
+  5. Insertion ................................ |writetex-insertion|
+  6. Troubleshooting .......................... |writetex-troubleshooting|
+
+==============================================================================
+1. INTRODUCTION                                                *writetex-intro*
+
+writetex.nvim runs a small HTTP server that the WriteTex app (Android tablets,
+iPad) sends handwriting to. Each image is passed, with the text around the
+cursor, to an OpenAI-compatible vision model, and the LaTeX it returns is
+inserted at the cursor. The server speaks the same protocol as the WriteTex
+VS Code extension, so the app needs no changes.
+
+Requirements: Neovim 0.10+, curl. Optional: avahi-publish-service with
+avahi-daemon running, for LAN discovery.
+
+==============================================================================
+2. SETUP                                                       *writetex-setup*
+
+>lua
+    require("writetex").setup({
+      api = {
+        endpoint = "https://api.openai.com/v1",
+        model = "gpt-4o",
+        key_env = "OPENAI_API_KEY",
+      },
+    })
+<
+Then run `:WriteTex start` and fill in the app's settings:
+
+    API Endpoint  http://<this computer's IP>:50905
+    API Key       writetex   (the |writetex-token| option)
+    Model Name    anything; |writetex-api| model is used
+
+Run `:checkhealth writetex` to check the setup.
+
+==============================================================================
+3. COMMANDS                                                 *writetex-commands*
+
+                                                                    *:WriteTex*
+:WriteTex start         Start the server and, if enabled, LAN discovery.
+:WriteTex stop          Stop them.
+:WriteTex toggle        Start or stop. Same as `:WriteTex` with no argument.
+:WriteTex status        Show the port, model and LAN addresses.
+
+Lua: `require("writetex").start()`, `.stop()`, `.toggle()`, `.status()`.
+
+==============================================================================
+4. OPTIONS                                                   *writetex-options*
+
+Pass these to `setup()`. Defaults in brackets.
+
+host [`"0.0.0.0"`]                                            *writetex-host*
+    Address to listen on. Set your LAN IP to accept only that interface.
+
+port [`50905`]                                                *writetex-port*
+    Port the app sends to.
+
+token [`"writetex"`]                                         *writetex-token*
+    Must equal the "API Key" set in the app.
+
+autostart [`false`]                                      *writetex-autostart*
+    Start the server when `setup()` runs.
+
+mdns [`true`]                                                 *writetex-mdns*
+    Advertise as `_writetex-vscode._tcp` via avahi-publish-service.
+
+api                                                            *writetex-api*
+    endpoint [`"https://api.openai.com/v1"`]  base URL; `/chat/completions`
+                                              is appended
+    model [`"gpt-4o"`]
+    key [`nil`]                               the API key itself
+    key_env [`nil`]                           environment variable holding
+                                              the key; tried before `key`
+    timeout [`300`]                           seconds
+
+extra_body [`{}`]                                       *writetex-extra_body*
+    Extra JSON fields merged into every request to the model. `model`,
+    `messages` and `stream` can't be overridden; `max_tokens` can. To turn
+    off reasoning on Qwen3-style models (llama.cpp, vLLM, SGLang):
+>lua
+    extra_body = { chat_template_kwargs = { enable_thinking = false } }
+<
+custom_prompt [`""`]                                 *writetex-custom_prompt*
+    Appended to the system prompt.
+
+context                                                    *writetex-context*
+    line_radius [`20`]   lines above and below the cursor sent as context
+    char_limit [`2000`]  maximum characters of context
+
+filetypes                                                *writetex-filetypes*
+    [`{ "tex", "plaintex", "latex", "bib", "markdown", "rmd", "quarto",
+    "typst", "pandoc" }`]
+    Filetypes the result is inserted into. Elsewhere it goes to the `+` and
+    `"` registers. `false` allows any modifiable buffer.
+
+strip_think [`true`]                                   *writetex-strip_think*
+    Remove a leading `<think>...</think>` block from the result.
+
+strip_code_fences [`true`]                       *writetex-strip_code_fences*
+    Unwrap a result wrapped in a single ```lang ... ``` block.
+
+move_cursor [`true`]                                   *writetex-move_cursor*
+    Move the cursor to the end of the inserted text.
+
+==============================================================================
+5. INSERTION                                               *writetex-insertion*
+
+The position is taken when the request arrives: at the cursor in Insert
+mode, after the character under the cursor in Normal mode. An extmark keeps
+it in place while the model works, so moving around meanwhile is fine.
+
+The result goes to the registers instead when the buffer was closed, isn't
+'modifiable', or its filetype isn't in |writetex-filetypes|. The notification
+says which.
+
+==============================================================================
+6. TROUBLESHOOTING                                   *writetex-troubleshooting*
+
+App says Unauthorized (401) ~
+    The app's API Key must equal |writetex-token|.
+
+cannot listen on ... (EADDRINUSE) ~
+    Another program uses the port, often the VS Code extension. Stop it or
+    change |writetex-port| and the app's endpoint.
+
+App can't connect ~
+    Same network? Right IP (`:WriteTex status`)? Allow the port in the
+    firewall, e.g. `sudo ufw allow 50905/tcp`.
+
+LAN discovery unavailable ~
+    Start avahi-daemon (`sudo systemctl enable --now avahi-daemon`) or set
+    |writetex-mdns| to false and enter the IP in the app.
+
+Slow recognition ~
+    Turn off reasoning with |writetex-extra_body|.
+
+ vim:tw=78:ts=8:ft=help:norl:
