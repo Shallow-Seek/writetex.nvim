@@ -38,7 +38,7 @@ Then run `:WriteTex start` and fill in the app's settings:
 
     API Endpoint  http://<this computer's IP>:50905
     API Key       writetex   (the |writetex-token| option)
-    Model Name    anything; |writetex-api| model is used
+    Model Name    anything; the active provider's model is used
 
 Run `:checkhealth writetex` to check the setup.
 
@@ -49,9 +49,15 @@ Run `:checkhealth writetex` to check the setup.
 :WriteTex start         Start the server and, if enabled, LAN discovery.
 :WriteTex stop          Stop them.
 :WriteTex toggle        Start or stop. Same as `:WriteTex` with no argument.
-:WriteTex status        Show the port, model and LAN addresses.
+:WriteTex status        Show the port, active provider and LAN addresses.
+:WriteTex provider      Pick the provider from a menu (|vim.ui.select()|).
+:WriteTex provider {name}
+                        Switch to provider {name}. Applies to the next image;
+                        the server keeps running. See |writetex-providers|.
 
-Lua: `require("writetex").start()`, `.stop()`, `.toggle()`, `.status()`.
+Lua: `require("writetex").start()`, `.stop()`, `.toggle()`, `.status()`,
+`.provider([name])`, and `.current()`, which returns the active provider's
+name (handy for a statusline).
 
 ==============================================================================
 4. OPTIONS                                                   *writetex-options*
@@ -73,7 +79,45 @@ autostart [`false`]                                      *writetex-autostart*
 mdns [`true`]                                                 *writetex-mdns*
     Advertise as `_writetex-vscode._tcp` via avahi-publish-service.
 
+providers [`{}`]                                         *writetex-providers*
+    Named providers to switch between with `:WriteTex provider`. When empty,
+    |writetex-api| is the only provider (named "default"). Each entry takes:
+
+    endpoint     base URL of the OpenAI-compatible API (required)
+    model        model name (required)
+    key_env      environment variable holding the key (tried first)
+    key          the key itself
+    timeout      seconds; default |writetex-api| timeout
+    extra_body   merged over the top-level |writetex-extra_body|; set a
+                 field to |vim.NIL| to remove a shared one
+
+    Named providers never use |writetex-api|'s key or endpoint, so a key for
+    one service isn't sent to another.
+>lua
+    providers = {
+      ["local"] = {
+        endpoint = "http://127.0.0.1:8080/v1",
+        model = "your-model-name",
+        key = "dummy",
+        extra_body = { chat_template_kwargs = { enable_thinking = false } },
+      },
+      groq = {
+        endpoint = "https://api.groq.com/openai/v1",
+        model = "qwen/qwen3.8-27b",
+        key_env = "GROQ_API_KEY",
+        extra_body = { reasoning_effort = "none" },
+      },
+    },
+<
+provider [`nil`]                                          *writetex-provider*
+    Provider to start with. Default: the first name in alphabetical order.
+
+remember_provider [`true`]                       *writetex-remember_provider*
+    Save the provider picked with `:WriteTex provider` (in the |stdpath()|
+    "state" directory) and use it after a restart, over |writetex-provider|.
+
 api                                                            *writetex-api*
+    The provider used when |writetex-providers| is empty.
     endpoint [`"https://api.openai.com/v1"`]  base URL; `/chat/completions`
                                               is appended
     model [`"gpt-4o"`]
@@ -83,12 +127,15 @@ api                                                            *writetex-api*
     timeout [`300`]                           seconds
 
 extra_body [`{}`]                                       *writetex-extra_body*
-    Extra JSON fields merged into every request to the model. `model`,
-    `messages` and `stream` can't be overridden; `max_tokens` can. To turn
-    off reasoning on Qwen3-style models (llama.cpp, vLLM, SGLang):
->lua
-    extra_body = { chat_template_kwargs = { enable_thinking = false } }
-<
+    Extra JSON fields merged into every request to the model, for every
+    provider. `model`, `messages` and `stream` can't be overridden;
+    `max_tokens` can. To turn off reasoning:
+
+    llama.cpp, vLLM, SGLang      `{ chat_template_kwargs = { enable_thinking = false } }`
+    Groq (Qwen3 models)          `{ reasoning_effort = "none" }`
+
+    APIs may reject fields they don't know; put such fields in the
+    provider's own extra_body (|writetex-providers|).
 custom_prompt [`""`]                                 *writetex-custom_prompt*
     Appended to the system prompt.
 
@@ -139,6 +186,10 @@ App can't connect ~
 LAN discovery unavailable ~
     Start avahi-daemon (`sudo systemctl enable --now avahi-daemon`) or set
     |writetex-mdns| to false and enter the IP in the app.
+
+API error 400 ~
+    The API rejected a field from |writetex-extra_body|. Move it into the
+    extra_body of the provider that needs it.
 
 Slow recognition ~
     Turn off reasoning with |writetex-extra_body|.

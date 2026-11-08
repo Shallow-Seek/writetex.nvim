@@ -17,7 +17,8 @@ It's a Neovim port of the [WriteTex VS Code extension](https://github.com/jackli
 
 - **Uses your file as context.** The lines around the cursor are sent with the image, so the model matches your notation and knows whether it's inside math mode.
 - **Works with any OpenAI-compatible vision model:** OpenAI, OpenRouter, or a local llama.cpp, vLLM, SGLang or Ollama server.
-- **`extra_body` option** for provider-specific settings, such as turning off reasoning on Qwen3-style models so recognition is fast.
+- **Several providers, switch any time.** Set up a local model and a cloud one (Groq, OpenAI, …) and switch with `:WriteTex provider`, even while the server is running.
+- **`extra_body` option** for provider-specific settings, such as turning off reasoning so recognition is fast.
 - **Inserts at the right place:** where the cursor was when the image arrived, even if you move afterwards. The cursor then moves past the new text, so the next formula follows it.
 - **Cleans up the output:** removes `<think>` blocks and ```` ```latex ```` fences.
 - **No plugin dependencies.** Pure Lua plus `curl`.
@@ -80,7 +81,7 @@ After installing, run `:checkhealth writetex`.
    |---|---|
    | API Endpoint | `http://<your computer's IP>:50905`, for example `http://192.168.1.104:50905` |
    | API Key | `writetex` (it must match the plugin's `token` option) |
-   | Model Name | anything; the plugin's `api.model` is used |
+   | Model Name | anything; the plugin uses the active provider's model |
 
 3. **Write a formula.** Open a `.tex` (or Markdown, Typst, …) file and put the cursor where the formula should go. Write it in the app and send it. The LaTeX appears at the cursor, and the app shows the result too.
 
@@ -93,12 +94,16 @@ Run `:WriteTex stop` when you're done.
 | `:WriteTex start` | Start the server (and LAN discovery, if enabled) |
 | `:WriteTex stop` | Stop it |
 | `:WriteTex toggle` | Start or stop. This is also what `:WriteTex` with no argument does |
-| `:WriteTex status` | Show the port, model and LAN addresses |
+| `:WriteTex status` | Show the port, active provider and LAN addresses |
+| `:WriteTex provider` | Pick the provider from a menu |
+| `:WriteTex provider <name>` | Switch to that provider (names complete with <kbd>Tab</kbd>) |
 
-The same functions are available from Lua, for keymaps:
+The same functions are available from Lua, for keymaps and statuslines:
 
 ```lua
 vim.keymap.set("n", "<leader>wt", function() require("writetex").toggle() end, { desc = "WriteTex server" })
+vim.keymap.set("n", "<leader>wp", function() require("writetex").provider() end, { desc = "WriteTex provider" })
+-- require("writetex").current() returns the active provider's name
 ```
 
 ## Configuration
@@ -113,6 +118,14 @@ require("writetex").setup({
   autostart = false,      -- start the server when setup() runs
   mdns = true,            -- advertise on the LAN via avahi-publish-service
 
+  -- Named providers to switch between; see "Providers" below. When empty,
+  -- `api` is the only provider.
+  providers = {},
+  provider = nil,           -- provider to start with (default: the first by name)
+  remember_provider = true, -- the last one picked with :WriteTex provider wins after a restart
+
+  -- The provider used when `providers` is empty. Its `timeout` is also the
+  -- default for named providers.
   api = {
     endpoint = "https://api.openai.com/v1", -- base URL; /chat/completions is appended
     model = "gpt-4o",
@@ -121,7 +134,7 @@ require("writetex").setup({
     timeout = 300,        -- seconds
   },
 
-  -- Extra JSON fields merged into every request to the model.
+  -- Extra JSON fields merged into every request to the model, for every provider.
   -- model, messages and stream can't be overridden; max_tokens can.
   extra_body = {},
 
@@ -142,26 +155,58 @@ require("writetex").setup({
 })
 ```
 
-### Model examples
+### Providers
 
-**OpenAI**
+For one model, `api` is enough. To switch between several, list them under `providers`. Each one takes:
+
+| Field | |
+|---|---|
+| `endpoint` | Base URL of the OpenAI-compatible API (required) |
+| `model` | Model name (required) |
+| `key_env` / `key` | Environment variable holding the API key, or the key itself. Named providers never use `api`'s key, so one service's key isn't sent to another. |
+| `timeout` | Seconds (default: `api.timeout`) |
+| `extra_body` | Extra request fields for this provider, merged over the top-level `extra_body`. Set a field to `vim.NIL` to remove a shared one. |
+
+This example has a local model and Groq, both with reasoning off:
 
 ```lua
-api = { endpoint = "https://api.openai.com/v1", model = "gpt-4o", key_env = "OPENAI_API_KEY" },
+require("writetex").setup({
+  provider = "local", -- start with this one
+  providers = {
+    ["local"] = {
+      endpoint = "http://127.0.0.1:8080/v1",
+      model = "your-model-name", -- as listed by GET /v1/models
+      key = "dummy",             -- if the server doesn't check keys
+      extra_body = { chat_template_kwargs = { enable_thinking = false } },
+    },
+    groq = {
+      endpoint = "https://api.groq.com/openai/v1",
+      model = "qwen/qwen3.8-27b",
+      key_env = "GROQ_API_KEY",
+      extra_body = { reasoning_effort = "none" },
+    },
+    openai = {
+      endpoint = "https://api.openai.com/v1",
+      model = "gpt-4o",
+      key_env = "OPENAI_API_KEY",
+    },
+  },
+})
 ```
 
-**Local llama.cpp, vLLM or SGLang server with a Qwen3-style vision model.** Turning thinking off makes each recognition several times faster:
+Then `:WriteTex provider groq`, or `:WriteTex provider` for a menu. The switch applies to the next image; the server keeps running.
 
-```lua
-api = {
-  endpoint = "http://127.0.0.1:8080/v1",
-  model = "your-model-name", -- as listed by GET /v1/models
-  key = "dummy",             -- if the server doesn't check keys
-},
-extra_body = { chat_template_kwargs = { enable_thinking = false } },
-```
+#### Turning reasoning off
 
-**Other reasoning models.** If the API supports it, add `extra_body = { reasoning_effort = "low" }`.
+Reasoning models think before answering, which can make each formula take many times longer. Each API has its own switch, set through `extra_body`:
+
+| Where the model runs | `extra_body` |
+|---|---|
+| llama.cpp, vLLM, SGLang (Qwen3-style chat templates) | `{ chat_template_kwargs = { enable_thinking = false } }` |
+| Groq, Qwen3 models | `{ reasoning_effort = "none" }` ([Groq docs](https://console.groq.com/docs/reasoning)) |
+| Other APIs with `reasoning_effort` | the lowest value they accept, e.g. `{ reasoning_effort = "low" }` |
+
+An API may reject fields it doesn't know (Groq doesn't take `chat_template_kwargs`, for example). That's why each provider has its own `extra_body`.
 
 ## Where the text goes
 
@@ -188,18 +233,20 @@ If Avahi isn't available, you'll see `LAN discovery unavailable` when you start 
 | `cannot listen on 0.0.0.0:50905 (EADDRINUSE)` | Something else is on that port, usually the VS Code extension or another Neovim. Stop it, or set a different `port` and change the app's endpoint to match. |
 | App times out or can't connect | Check the tablet and computer are on the same network and the IP is right (`:WriteTex status`). Allow the port in your firewall, for example `sudo ufw allow 50905/tcp` or `sudo firewall-cmd --add-port=50905/tcp`. |
 | `copied to clipboard, not inserted: … is not in the filetypes option` | Add the filetype to `filetypes`, or set `filetypes = false`. |
-| `API error 401` / `404` from the model | Check `api.endpoint` (it should end in `/v1` for most servers), `api.model` and the key. |
-| Recognition is slow | Turn off reasoning through `extra_body` (see [Model examples](#model-examples)). |
+| `API error 401` / `404` from the model | Check the active provider's `endpoint` (it should end in `/v1` for most servers), `model` and key. `:checkhealth writetex` shows which key variables are unset. |
+| `API error 400` after adding `extra_body` fields | The API doesn't accept one of them. Put provider-specific fields in that provider's `extra_body`. |
+| `provider … needs an endpoint and a model` | Add both to that entry in `providers`. |
+| Recognition is slow | Turn off reasoning (see [Turning reasoning off](#turning-reasoning-off)). |
 | `LAN discovery unavailable` | See [LAN discovery](#lan-discovery). |
 
-`:checkhealth writetex` checks `curl`, Avahi and the current settings.
+`:checkhealth writetex` checks `curl`, Avahi, and each provider's settings and key.
 
 ## How it works
 
 The server speaks the OpenAI chat completions protocol, like the VS Code extension:
 
 1. The app sends `POST /v1/chat/completions` with `Authorization: Bearer <token>` and the drawing as a base64 `image_url`.
-2. The plugin notes the cursor position and builds a new request for your model: a system prompt with the text around the cursor (marked `<<<User Cursor Here>>>`), the image, your `api.model`, and `extra_body`.
+2. The plugin notes the cursor position and builds a new request for the active provider: a system prompt with the text around the cursor (marked `<<<User Cursor Here>>>`), the image, the provider's model, and `extra_body`.
 3. The model's answer streams back to the app as it arrives, so the app shows the result as usual.
 4. When it's finished, the plugin cleans up the text and inserts it.
 

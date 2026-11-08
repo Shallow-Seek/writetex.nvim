@@ -83,7 +83,11 @@ end
 -- Runs on the main loop: capture context, call upstream, relay, insert.
 local function handle_completion(client, req)
   local target = context.capture()
-  local body = upstream.build(req, target)
+  local provider = config.provider()
+  if not (provider.endpoint and provider.model) then
+    error(('provider %s needs an endpoint and a model'):format(provider.name))
+  end
+  local body = upstream.build(req, target, provider)
   local stream = body.stream
   local chunked = function(data)
     if #data > 0 and not client:is_closing() then
@@ -100,8 +104,8 @@ local function handle_completion(client, req)
     })
   end
 
-  notify('recognizing…')
-  upstream.post(body, stream and chunked or function() end, function(status, raw)
+  notify(('recognizing with %s…'):format(provider.name))
+  upstream.post(body, provider, stream and chunked or function() end, function(status, raw)
     local text, err
     if status == 200 then
       if stream then

@@ -21,8 +21,9 @@ local function has_image(msg)
 end
 
 ---Turns the app's request into the upstream request: injects the editor
----context, keeps only the images from user messages, applies model and extra_body.
-function M.build(req, ctx)
+---context, keeps only the images from user messages, applies the provider's
+---model and extra_body (`provider` comes from config.provider()).
+function M.build(req, ctx, provider)
   local opts = config.options
   local messages = req.messages
   if ctx and vim.iter(messages):any(has_image) then
@@ -43,8 +44,8 @@ function M.build(req, ctx)
     end
   end
 
-  local body = vim.deepcopy(opts.extra_body or {})
-  body.model = opts.api.model
+  local body = vim.deepcopy(provider.extra_body)
+  body.model = provider.model
   body.messages = messages
   body.stream = req.stream ~= false
   body.max_tokens = body.max_tokens or req.max_tokens or 10000
@@ -82,23 +83,21 @@ function M.clean(text)
   return text
 end
 
----POSTs `body` to the upstream chat/completions endpoint.
+---POSTs `body` to the provider's chat/completions endpoint.
 ---`on_data(chunk)` receives the response body as it arrives when the status is 200;
 ---`on_done(status, body_or_error)` runs once at the end. Both run in a fast (luv) context.
 ---@return vim.SystemObj
-function M.post(body, on_data, on_done)
-  local api = config.options.api
-  local url = api.endpoint:gsub('/+$', '') .. '/chat/completions'
+function M.post(body, provider, on_data, on_done)
+  local url = provider.endpoint:gsub('/+$', '') .. '/chat/completions'
   local cmd = {
-    'curl', '-sS', '-N', '-i', '--max-time', tostring(api.timeout),
+    'curl', '-sS', '-N', '-i', '--max-time', tostring(provider.timeout),
     '-X', 'POST', url,
     '-H', 'Content-Type: application/json',
     '-H', 'Expect:',
     '--data-binary', '@-',
   }
-  local key = config.api_key()
-  if key and key ~= '' then
-    vim.list_extend(cmd, { '-H', 'Authorization: Bearer ' .. key })
+  if provider.key and provider.key ~= '' then
+    vim.list_extend(cmd, { '-H', 'Authorization: Bearer ' .. provider.key })
   end
 
   local head, status, rest = '', nil, {}

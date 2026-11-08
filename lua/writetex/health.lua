@@ -23,9 +23,20 @@ function M.check()
   else
     vim.health.info('server stopped (:WriteTex start)')
   end
-  vim.health.info(('upstream: %s, model %s'):format(o.api.endpoint, o.api.model))
-  if not config.api_key() then
-    vim.health.info('no API key set; requests are sent without Authorization')
+  local current = config.provider().name
+  vim.health.start('writetex.nvim providers')
+  for _, name in ipairs(config.names()) do
+    local p = config.options.providers[name] or o.api
+    local label = ('%s%s: %s at %s'):format(name, name == current and ' (active)' or '', p.model or '?', p.endpoint or '?')
+    if not (p.endpoint and p.model) then
+      vim.health.error(label .. ' — needs both endpoint and model')
+    elseif p.key_env and (vim.env[p.key_env] or '') == '' and not p.key then
+      vim.health.warn(('%s — $%s is not set'):format(label, p.key_env))
+    elseif not (p.key or p.key_env) then
+      vim.health.ok(label .. ' (no API key; sent without Authorization)')
+    else
+      vim.health.ok(label)
+    end
   end
 end
 

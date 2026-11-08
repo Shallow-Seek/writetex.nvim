@@ -43,30 +43,67 @@ function M.toggle()
   end
 end
 
+local function describe(p)
+  return ('%s (%s at %s)'):format(p.name, p.model or '?', p.endpoint or '?')
+end
+
 function M.status()
   local o = config.options
+  local p = describe(config.provider())
   if not server.is_running() then
-    return vim.notify('WriteTex: stopped')
+    return vim.notify('WriteTex: stopped; provider ' .. p)
   end
-  vim.notify(('WriteTex: running on %s:%d → %s (%s), LAN: %s'):format(
-    o.host, o.port, o.api.endpoint, o.api.model, table.concat(addresses(), ', ')))
+  vim.notify(('WriteTex: running on %s:%d → %s, LAN: %s'):format(o.host, o.port, p, table.concat(addresses(), ', ')))
+end
+
+---Name of the active provider, e.g. for a statusline.
+function M.current()
+  return config.provider().name
+end
+
+---Switch to provider `name`, or pick one from a menu when `name` is nil.
+function M.provider(name)
+  if name then
+    if not config.use(name) then
+      return vim.notify(('WriteTex: no provider %q (have: %s)'):format(name, table.concat(config.names(), ', ')),
+        vim.log.levels.ERROR)
+    end
+    return vim.notify('WriteTex: using ' .. describe(config.provider()))
+  end
+  local current = M.current()
+  vim.ui.select(config.names(), {
+    prompt = 'WriteTex provider',
+    format_item = function(n)
+      local p = config.options.providers[n] or config.options.api
+      return ('%s%s  %s'):format(n == current and '● ' or '  ', n, p.model or '')
+    end,
+  }, function(choice)
+    if choice then
+      M.provider(choice)
+    end
+  end)
 end
 
 function M.setup(opts)
   config.set(opts)
-  local subs = { start = M.start, stop = M.stop, toggle = M.toggle, status = M.status }
+  local subs = { start = M.start, stop = M.stop, toggle = M.toggle, status = M.status, provider = M.provider }
   vim.api.nvim_create_user_command('WriteTex', function(args)
-    local fn = subs[args.args ~= '' and args.args or 'toggle']
+    local sub, arg = args.fargs[1] or 'toggle', args.fargs[2]
+    local fn = subs[sub]
     if not fn then
-      return vim.notify('WriteTex: unknown subcommand ' .. args.args, vim.log.levels.ERROR)
+      return vim.notify('WriteTex: unknown subcommand ' .. sub, vim.log.levels.ERROR)
     end
-    fn()
+    fn(arg)
   end, {
-    nargs = '?',
-    complete = function()
-      return vim.tbl_keys(subs)
+    nargs = '*',
+    complete = function(lead, line)
+      local words = vim.split(line:sub(1, -#lead - 1), '%s+', { trimempty = true })
+      local items = #words <= 1 and vim.tbl_keys(subs) or (words[2] == 'provider' and #words == 2) and config.names() or {}
+      return vim.tbl_filter(function(s)
+        return vim.startswith(s, lead)
+      end, items)
     end,
-    desc = 'WriteTex server: start | stop | toggle | status',
+    desc = 'WriteTex: start | stop | toggle | status | provider [name]',
   })
   vim.api.nvim_create_autocmd('VimLeavePre', {
     group = vim.api.nvim_create_augroup('writetex', { clear = true }),
