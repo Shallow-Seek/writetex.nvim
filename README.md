@@ -183,7 +183,8 @@ require("writetex").setup({
       endpoint = "https://api.groq.com/openai/v1",
       model = "qwen/qwen3.8-27b",
       key_env = "GROQ_API_KEY",
-      extra_body = { reasoning_effort = "none" },
+      -- max_tokens: see "Rate limits" below
+      extra_body = { reasoning_effort = "none", max_tokens = 500 },
     },
     openai = {
       endpoint = "https://api.openai.com/v1",
@@ -207,6 +208,20 @@ Reasoning models think before answering, which can make each formula take many t
 | Other APIs with `reasoning_effort` | the lowest value they accept, e.g. `{ reasoning_effort = "low" }` |
 
 An API may reject fields it doesn't know (Groq doesn't take `chat_template_kwargs`, for example). That's why each provider has its own `extra_body`.
+
+#### Rate limits on free tiers
+
+The plugin asks for up to 10,000 output tokens per request, so long answers such as TikZ drawings aren't cut off. Some free tiers refuse any request that *asks* for more output than they allow per minute. On Groq's free tier, for example, `qwen/qwen3.8-27b` allows 1,000 output tokens per minute, and every request fails with:
+
+```
+API error 429: … Request too large for model … on output tokens per minute (OTPM): Limit 1000 …
+```
+
+Cap the request in that provider's `extra_body`. A formula needs a few dozen tokens:
+
+```lua
+extra_body = { reasoning_effort = "none", max_tokens = 500 },
+```
 
 ## Where the text goes
 
@@ -234,6 +249,7 @@ If Avahi isn't available, you'll see `LAN discovery unavailable` when you start 
 | App times out or can't connect | Check the tablet and computer are on the same network and the IP is right (`:WriteTex status`). Allow the port in your firewall, for example `sudo ufw allow 50905/tcp` or `sudo firewall-cmd --add-port=50905/tcp`. |
 | `copied to clipboard, not inserted: … is not in the filetypes option` | Add the filetype to `filetypes`, or set `filetypes = false`. |
 | `API error 401` / `404` from the model | Check the active provider's `endpoint` (it should end in `/v1` for most servers), `model` and key. `:checkhealth writetex` shows which key variables are unset. |
+| `API error 429` … `Request too large` … `tokens per minute` | The provider's tier allows fewer output tokens than the plugin asks for. Set `max_tokens` in that provider's `extra_body` (see [Rate limits on free tiers](#rate-limits-on-free-tiers)). |
 | `API error 400` after adding `extra_body` fields | The API doesn't accept one of them. Put provider-specific fields in that provider's `extra_body`. |
 | `provider … needs an endpoint and a model` | Add both to that entry in `providers`. |
 | Recognition is slow | Turn off reasoning (see [Turning reasoning off](#turning-reasoning-off)). |

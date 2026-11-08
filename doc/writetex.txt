@@ -105,7 +105,9 @@ providers [`{}`]                                         *writetex-providers*
         endpoint = "https://api.groq.com/openai/v1",
         model = "qwen/qwen3.8-27b",
         key_env = "GROQ_API_KEY",
-        extra_body = { reasoning_effort = "none" },
+        -- Groq's free tier allows 1000 output tokens per minute and
+        -- refuses requests asking for more; see |writetex-rate-limits|.
+        extra_body = { reasoning_effort = "none", max_tokens = 500 },
       },
     },
 <
@@ -187,6 +189,14 @@ LAN discovery unavailable ~
     Start avahi-daemon (`sudo systemctl enable --now avahi-daemon`) or set
     |writetex-mdns| to false and enter the IP in the app.
 
+                                                       *writetex-rate-limits*
+API error 429, "Request too large ... tokens per minute" ~
+    The plugin asks for up to 10000 output tokens per request. Free tiers
+    that allow fewer per minute (Groq: 1000 for qwen/qwen3.8-27b) refuse
+    such requests outright. Cap it in that provider's extra_body:
+>lua
+    extra_body = { reasoning_effort = "none", max_tokens = 500 },
+<
 API error 400 ~
     The API rejected a field from |writetex-extra_body|. Move it into the
     extra_body of the provider that needs it.
